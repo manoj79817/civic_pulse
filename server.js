@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import twilio from 'twilio';
 import dotenv from 'dotenv';
 import axios from 'axios';
 
@@ -27,64 +26,22 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Twilio Client
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const client = (accountSid && authToken) ? twilio(accountSid, authToken) : null;
-
 // Routes
 app.get('/', (req, res) => {
-    res.send('Citizen Connect API Server is running.');
+    res.send('Civic Pulse API Server is running.');
 });
 
+// SMS endpoint (mock — logs only, no real SMS sent)
 app.post('/api/send-sms', async (req, res) => {
-    console.log("Incoming SMS Request:", req.body);
     const { phone, message } = req.body;
 
     if (!phone || !message) {
-        console.error("Missing phone/message");
         return res.status(400).json({ success: false, error: 'Phone and message are required.' });
     }
 
-    if (!client) {
-        console.warn("Twilio Credentials missing. Mocking SMS send.");
-        console.log(`[MOCK SMS] To: ${phone}, Msg: ${message}`);
-        return res.status(200).json({ success: true, mock: true, message: 'SMS logged (Twilio not configured)' });
-    }
-
-    try {
-        const fromNumber = process.env.TWILIO_PHONE_NUMBER;
-
-        // Normalize phone number to E.164
-        let cleanPhone = phone.replace(/\D/g, '');
-        console.log(`📱 Original phone: ${phone}, Cleaned: ${cleanPhone}`);
-
-        // If 10 digits, assume India (+91)
-        if (cleanPhone.length === 10) {
-            cleanPhone = `91${cleanPhone}`;
-        }
-        // If 12 digits and starts with 91, it's correct (just add +)
-        // If other length, try as is (or default to 91 if reasonable?)
-
-        const to = `+${cleanPhone}`;
-
-        console.log(`📤 Sending SMS to: ${to} (from ${fromNumber})`);
-        console.log(`📝 Message: ${message}`);
-
-        const response = await client.messages.create({
-            body: message,
-            from: fromNumber,
-            to: to
-        });
-
-        console.log(`✅ SMS Sent Successfully! SID: ${response.sid}`);
-        res.json({ success: true, sid: response.sid });
-    } catch (error) {
-        console.error('❌ Twilio Error:', error.message);
-        console.error('Error Code:', error.code);
-        console.error('Error Details:', error);
-        res.status(500).json({ success: false, error: error.message, code: error.code });
-    }
+    console.log(`📱 [SMS Notification] To: ${phone}`);
+    console.log(`📝 Message: ${message}`);
+    res.status(200).json({ success: true, mock: true, message: 'Notification logged successfully' });
 });
 
 // Get Public IP endpoint (to avoid CORS issues in frontend)
