@@ -2,26 +2,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { dbService } from '../../api/db';
 import { civicIssues } from '../../constants/civicIssues';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 const AdminMap = ({ reports }) => {
     const mapRef = useRef(null);
-    const [map, setMap] = useState(null);
+    const mapInstanceRef = useRef(null);
     const [markers, setMarkers] = useState([]);
-    const [infoWindow, setInfoWindow] = useState(null);
     const navigate = useNavigate();
 
-    
+    // Filters
     const [selectedTypes, setSelectedTypes] = useState([]);
     const [selectedStatuses, setSelectedStatuses] = useState(['new', 'in-progress', 'resolved', 'rejected']);
     const [selectedDistricts, setSelectedDistricts] = useState([]);
     const [availableDistricts, setAvailableDistricts] = useState([]);
 
     const [isFilterOpen, setIsFilterOpen] = useState(true);
-    const [colorMode, setColorMode] = useState('status'); 
-
-    
-    
-    
+    const [colorMode, setColorMode] = useState('status');
 
     const statusOptions = [
         { id: 'new', label: 'New / Open', color: '#3B82F6' },
@@ -36,12 +33,10 @@ const AdminMap = ({ reports }) => {
         return str.charAt(0).toUpperCase() + str.slice(1);
     };
 
-    
+    // Init filters from reports
     useEffect(() => {
-        
         setSelectedTypes(civicIssues.map(i => i.id.toString()));
 
-        
         if (reports && reports.length > 0) {
             const districts = [...new Set(reports.map(r => normalizeDistrict(r.district)))].sort();
             setAvailableDistricts(districts);
@@ -49,45 +44,29 @@ const AdminMap = ({ reports }) => {
         }
     }, [reports]);
 
-    
-    const defaultCenter = { lat: 17.3850, lng: 78.4867 }; 
+    // Default center: Hyderabad
+    const defaultCenter = [17.3850, 78.4867];
 
+    // Init Leaflet map
     useEffect(() => {
-        const loadScript = () => {
-            if (window.google && window.google.maps) {
-                initMap();
-                return;
-            }
+        if (mapInstanceRef.current || !mapRef.current) return;
 
-            const script = document.createElement('script');
-            const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
-            script.async = true;
-            script.defer = true;
-            script.onload = initMap;
-            document.head.appendChild(script);
+        const map = L.map(mapRef.current, {
+            center: defaultCenter,
+            zoom: 6,
+        });
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19,
+        }).addTo(map);
+
+        mapInstanceRef.current = map;
+
+        return () => {
+            map.remove();
+            mapInstanceRef.current = null;
         };
-
-        const initMap = () => {
-            if (!mapRef.current) return;
-
-            const newMap = new window.google.maps.Map(mapRef.current, {
-                center: defaultCenter,
-                zoom: 6,
-                styles: [
-                    {
-                        featureType: "poi",
-                        elementType: "labels",
-                        stylers: [{ visibility: "off" }]
-                    }
-                ]
-            });
-
-            setMap(newMap);
-            setInfoWindow(new window.google.maps.InfoWindow());
-        };
-
-        loadScript();
     }, []);
 
     const getReportStatusId = (status) => {
@@ -98,39 +77,36 @@ const AdminMap = ({ reports }) => {
         return 'new';
     };
 
-    
+    const getStatusColor = (status) => {
+        const id = getReportStatusId(status);
+        const opt = statusOptions.find(o => o.id === id);
+        return opt ? opt.color : '#3B82F6';
+    };
+
+    // Draw markers when reports or filters change
     useEffect(() => {
+        const map = mapInstanceRef.current;
         if (!map || !reports.length) return;
 
-        
-        markers.forEach(m => m.setMap(null));
+        // Clear old markers
+        markers.forEach(m => map.removeLayer(m));
         const newMarkers = [];
-        const bounds = new window.google.maps.LatLngBounds();
-
-        console.log("AdminMap: Reports received:", reports.length);
-        console.log("AdminMap: Selected Districts:", selectedDistricts);
+        const bounds = L.latLngBounds([]);
 
         reports.forEach(report => {
-            
             const dist = normalizeDistrict(report.district);
-            if (!selectedDistricts.includes(dist)) {
-                
-                return;
-            }
+            if (!selectedDistricts.includes(dist)) return;
 
-            
             const statusId = getReportStatusId(report.status);
             if (!selectedStatuses.includes(statusId)) return;
 
-            
+            // Type filter
             let shouldShow = false;
             let issueId = null;
 
-            
             let typeIdStr = report.issueTypeId ? report.issueTypeId.toString() : null;
             const knownIds = civicIssues.map(i => i.id.toString());
 
-            
             if (typeIdStr && !knownIds.includes(typeIdStr)) {
                 typeIdStr = '17';
             }
@@ -139,12 +115,11 @@ const AdminMap = ({ reports }) => {
                 shouldShow = true;
                 issueId = parseInt(typeIdStr);
             } else if (!typeIdStr) {
-                
                 const match = civicIssues.find(i => i.title === report.issueTitle);
                 if (match && selectedTypes.includes(match.id.toString())) {
                     shouldShow = true;
                     issueId = match.id;
-                } else if (!match && selectedTypes.includes('17')) { 
+                } else if (!match && selectedTypes.includes('17')) {
                     shouldShow = true;
                     issueId = 17;
                 }
@@ -170,80 +145,58 @@ const AdminMap = ({ reports }) => {
                 return;
             }
 
-            
-            bounds.extend({ lat, lng });
+            bounds.extend([lat, lng]);
 
-            
+            // Determine marker color
             let markerColor;
             if (colorMode === 'status') {
                 markerColor = getStatusColor(report.status);
             } else {
-                
                 const issue = civicIssues.find(i => i.id === issueId);
                 markerColor = issue ? issue.color : '#6b7280';
             }
 
-            const marker = new window.google.maps.Marker({
-                position: { lat, lng },
-                map: map,
-                title: report.issueTitle,
-                icon: {
-                    path: window.google.maps.SymbolPath.CIRCLE,
-                    scale: 6,
-                    fillColor: markerColor,
-                    fillOpacity: 0.9,
-                    strokeColor: '#ffffff',
-                    strokeWeight: 1,
-                }
-            });
+            const circleMarker = L.circleMarker([lat, lng], {
+                radius: 6,
+                fillColor: markerColor,
+                fillOpacity: 0.9,
+                color: '#ffffff',
+                weight: 1,
+            }).addTo(map);
 
-            marker.addListener('click', () => {
-                const imageUrl = dbService.getImageUrl(report.imageId);
-                const contentString = `
-                    <div style="min-width: 200px; font-family: sans-serif;">
-                        <h3 style="margin: 0 0 8px; font-size: 16px;">${report.issueTitle || 'Issue'}</h3>
-                        <div style="margin-bottom: 8px;">
-                            <span style="background: ${getStatusColor(report.status)}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">
-                                ${report.status || 'New'}
-                            </span>
-                            <span style="color: #666; font-size: 12px; margin-left: 8px;">
-                                ${new Date(report.$createdAt).toLocaleDateString()}
-                            </span>
-                        </div>
-                        ${imageUrl ? `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">` : ''}
-                        <p style="margin: 0 0 8px; font-size: 13px; color: #333;">${report.description || ''}</p>
-                        <p style="margin: 0; font-size: 12px; color: #666;">
-                            <strong>District:</strong> ${report.district || 'N/A'}
-                        </p>
+            // Build popup
+            const imageUrl = dbService.getImageUrl(report.imageId);
+            const contentString = `
+                <div style="min-width: 200px; font-family: sans-serif;">
+                    <h3 style="margin: 0 0 8px; font-size: 16px;">${report.issueTitle || 'Issue'}</h3>
+                    <div style="margin-bottom: 8px;">
+                        <span style="background: ${getStatusColor(report.status)}; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px;">
+                            ${report.status || 'New'}
+                        </span>
+                        <span style="color: #666; font-size: 12px; margin-left: 8px;">
+                            ${new Date(report.$createdAt).toLocaleDateString()}
+                        </span>
                     </div>
-                `;
+                    ${imageUrl ? `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 4px; margin-bottom: 8px;">` : ''}
+                    <p style="margin: 0 0 8px; font-size: 13px; color: #333;">${report.description || ''}</p>
+                    <p style="margin: 0; font-size: 12px; color: #666;">
+                        <strong>District:</strong> ${report.district || 'N/A'}
+                    </p>
+                </div>
+            `;
 
-                infoWindow.setContent(contentString);
-                infoWindow.open(map, marker);
-            });
-
-            newMarkers.push(marker);
+            circleMarker.bindPopup(contentString, { maxWidth: 300, minWidth: 200 });
+            newMarkers.push(circleMarker);
         });
 
         setMarkers(newMarkers);
 
-        
-        if (newMarkers.length > 0) {
-            map.fitBounds(bounds);
-            
-            const listener = window.google.maps.event.addListener(map, "idle", () => {
-                if (map.getZoom() > 14) map.setZoom(14);
-                window.google.maps.event.removeListener(listener);
-            });
+        // Fit map to markers
+        if (newMarkers.length > 0 && bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
         }
 
-    }, [map, reports, selectedTypes, selectedStatuses, selectedDistricts, colorMode]);
-
-    const getStatusColor = (status) => {
-        const id = getReportStatusId(status);
-        const opt = statusOptions.find(o => o.id === id);
-        return opt ? opt.color : '#3B82F6';
-    };
+    }, [reports, selectedTypes, selectedStatuses, selectedDistricts, colorMode]);
 
     const toggleType = (id) => {
         const strId = id.toString();
@@ -252,7 +205,6 @@ const AdminMap = ({ reports }) => {
                 ? prev.filter(t => t !== strId)
                 : [...prev, strId];
 
-            
             if (newTypes.length < civicIssues.length) {
                 setColorMode('type');
             }
@@ -310,7 +262,7 @@ const AdminMap = ({ reports }) => {
                 right: 0,
                 top: 0,
                 bottom: 0,
-                zIndex: 10
+                zIndex: 1000
             }}>
                 <div style={{ padding: '1rem', borderBottom: '1px solid #e2e8f0', minWidth: '280px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -470,7 +422,7 @@ const AdminMap = ({ reports }) => {
                     position: 'absolute',
                     top: '10px',
                     right: isFilterOpen ? '290px' : '10px',
-                    zIndex: 11,
+                    zIndex: 1001,
                     background: 'white',
                     border: '1px solid #cbd5e0',
                     borderRadius: '4px',

@@ -123,3 +123,6 @@ dist-ssr
 
 # OS X
 .DS_Store
+
+# SSL Certificates (local dev only)
+certs/

@@ -128,24 +128,12 @@ const Profile = ({ currentUser }) => {
                     console.warn("GIS detection failed", gisErr);
                 }
 
-                
-                const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-                const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${apiKey}`);
+                const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1`);
                 const data = await resp.json();
 
-                if (data.status === 'OK' && data.results[0]) {
-                    let detectedState = '';
-                    let googleDistrict = '';
-
-                    data.results[0].address_components.forEach(comp => {
-                        if (comp.types.includes('administrative_area_level_1')) detectedState = comp.long_name;
-                        if (comp.types.includes('administrative_area_level_2')) googleDistrict = comp.long_name;
-                    });
-                    if (!googleDistrict) {
-                        data.results[0].address_components.forEach(comp => {
-                            if (comp.types.includes('administrative_area_level_3')) googleDistrict = comp.long_name;
-                        });
-                    }
+                if (data && data.address) {
+                    let detectedState = data.address.state || '';
+                    let googleDistrict = data.address.state_district || data.address.county || '';
 
                     const stateMatch = Object.keys(supportedLocations).find(s => s.toLowerCase() === detectedState.toLowerCase());
 

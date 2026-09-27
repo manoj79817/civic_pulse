@@ -7,6 +7,17 @@ import { detectAdministrativeArea, GIS_ERRORS } from '../api/gis';
 import { civicIssues } from '../constants/civicIssues';
 import VoiceInput from './VoiceInput';
 import { useLanguage } from '../context/LanguageContext';
+import { MapContainer, TileLayer, Marker } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+// Fix leaflet marker icon missing issue
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
 const Report = ({ currentUser }) => {
   console.log("Report component rendering...");
@@ -448,50 +459,29 @@ const Report = ({ currentUser }) => {
       async function reverseGeocode(lat, lng) {
         setIsResolvingAddress(true);
         try {
-          const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-          if (!apiKey || apiKey === 'YOUR_GOOGLE_MAPS_API_KEY') {
-            console.warn("Google Maps API Key is missing");
-            if (!abort) setAddress({ area: 'API Key Missing', city: '', postcode: '', state: '' });
-            return;
-          }
-
-          const resp = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`);
+          const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`);
           const data = await resp.json();
 
-          if (!resp.ok || data.status !== 'OK') {
-            throw new Error(`Geocode failed: ${data.status}`);
+          if (!resp.ok || data.error) {
+            throw new Error(`Geocode failed: ${data.error || 'Unknown error'}`);
           }
 
           if (abort) return;
 
-          const result = data.results[0];
-          if (result) {
+          const addressObj = data.address || {};
+          if (addressObj) {
             
-            let streetNumber = '', route = '', neighborhood = '', sublocality = '';
-            let city = '', postcode = '', state = '', district = '';
-            let establishment = '', premise = '';
-
-            result.address_components.forEach(comp => {
-              if (comp.types.includes('street_number')) streetNumber = comp.long_name;
-              if (comp.types.includes('route')) route = comp.long_name;
-              if (comp.types.includes('neighborhood')) neighborhood = comp.long_name;
-              if (comp.types.includes('sublocality')) sublocality = comp.long_name;
-              if (comp.types.includes('establishment') || comp.types.includes('point_of_interest')) establishment = comp.long_name;
-              if (comp.types.includes('premise') || comp.types.includes('subpremise')) premise = comp.long_name;
-
-              if (comp.types.includes('administrative_area_level_2')) {
-                district = comp.long_name;
-              }
-              if (comp.types.includes('locality')) {
-                city = comp.long_name;
-              }
-              if (comp.types.includes('postal_code')) {
-                postcode = comp.long_name;
-              }
-              if (comp.types.includes('administrative_area_level_1')) {
-                state = comp.long_name;
-              }
-            });
+            let city = addressObj.city || addressObj.town || addressObj.village || '';
+            let district = addressObj.state_district || addressObj.county || '';
+            let state = addressObj.state || '';
+            let postcode = addressObj.postcode || '';
+            
+            let establishment = addressObj.amenity || addressObj.tourism || '';
+            let premise = addressObj.building || '';
+            let streetNumber = addressObj.house_number || '';
+            let route = addressObj.road || addressObj.street || '';
+            let neighborhood = addressObj.neighbourhood || addressObj.suburb || '';
+            let sublocality = addressObj.residential || addressObj.quarter || '';
 
             
             let areaParts = [];
@@ -515,27 +505,16 @@ const Report = ({ currentUser }) => {
             let area = areaParts.join(', ');
 
             
-            if ((!area || area.includes('+')) && result.formatted_address) {
-              
-              const parts = result.formatted_address.split(',').map(p => p.trim());
-
-              
+            if ((!area || area.includes('+')) && data.display_name) {
+              const parts = data.display_name.split(',').map(p => p.trim());
               const filteredParts = parts.filter(part => {
                 const p = part.toLowerCase();
                 const c = city.toLowerCase();
                 const s = state.toLowerCase();
                 const d = district.toLowerCase();
                 const pc = postcode.toLowerCase();
-
-                
-                const isCity = c && (p === c || p.includes(c));
-                const isState = s && (p === s || p.includes(s));
-                const isDistrict = d && (p === d || p.includes(d));
-                const isPostcode = pc && (p === pc || p.includes(pc));
-
-                return !isCity && !isState && !isDistrict && !isPostcode;
+                return !(c && p.includes(c)) && !(s && p.includes(s)) && !(d && p.includes(d)) && !(pc && p.includes(pc));
               });
-
               if (filteredParts.length >= 2) {
                 area = filteredParts.slice(0, 2).join(', ');
               } else if (filteredParts.length > 0) {
@@ -649,10 +628,7 @@ const Report = ({ currentUser }) => {
       startCamera();
     };
 
-    const getGoogleMapsEmbedSrc = (lat, lng) => {
-      const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-      return `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${lat},${lng}`;
-    };
+
 
     
     function distanceMeters(c1, c2) {
@@ -1009,19 +985,21 @@ const Report = ({ currentUser }) => {
                   {gisError && !address?.district && <div className="gis-error">GIS Error: {gisError}</div>}
 
                   {isResolvingAddress && <p className="exif-status">Resolving address…</p>}
-                  <iframe
-                    title="location-preview"
-                    src={getGoogleMapsEmbedSrc(coords.lat, coords.lng)}
-                    style={{ border: 0 }}
-                    loading="lazy"
-                    referrerPolicy="no-referrer-when-downgrade"
-                  ></iframe>
+                  <div style={{ height: '250px', width: '100%', borderRadius: '8px', overflow: 'hidden', marginTop: '10px' }}>
+                    <MapContainer center={[coords.lat, coords.lng]} zoom={15} style={{ height: '100%', width: '100%' }}>
+                      <TileLayer
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                      />
+                      <Marker position={[coords.lat, coords.lng]} />
+                    </MapContainer>
+                  </div>
                   <a
                     className="osm-link"
-                    href={`https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`}
+                    href={`https://www.openstreetmap.org/?mlat=${coords.lat}&mlon=${coords.lng}#map=16/${coords.lat}/${coords.lng}`}
                     target="_blank"
                     rel="noreferrer"
-                  >Open in Google Maps</a>
+                  >Open in OpenStreetMap</a>
                 </div>
               )
             }
@@ -1206,13 +1184,7 @@ const Report = ({ currentUser }) => {
   }
 };
 
-function getGoogleMapsEmbedSrc(lat, lng) {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  if (!apiKey || apiKey === 'YOUR_GOOGLE_MAPS_API_KEY') {
-    return '';
-  }
-  return `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${lat},${lng}`;
-}
+
 
 export default Report;
 

@@ -3,16 +3,28 @@ import cors from 'cors';
 import twilio from 'twilio';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import https from 'https';
-import fs from 'fs';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 4000;
 
-// Middleware
-app.use(cors());
+// Middleware — Allow frontend origin in production, everything in dev
+const allowedOrigins = process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',')
+    : ['*'];
+
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, Postman, curl)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true
+}));
 app.use(express.json());
 
 // Twilio Client
